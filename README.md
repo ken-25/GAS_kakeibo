@@ -64,3 +64,13 @@ Alpine.js と Tailwind CSS を使用し、モダンでレスポンシブなUIを
 - **Frontend**: HTML5, Alpine.js
 - **Styling**: Tailwind CSS (CDN)
 - **Charts**: Chart.js, chartjs-plugin-datalabels
+
+## 📚 謝辞 / Acknowledgments
+
+本ダッシュボードのデザインと機能は、以下のオープンソースライブラリおよび一般的な管理画面UIパターンを参考に構築されています。
+
+- **[Tailwind CSS](https://tailwindcss.com/)**: UIデザインおよびスタイリング
+- **[Alpine.js](https://alpinejs.dev/)**: リアクティブなステート管理
+- **[Chart.js](https://www.chartjs.org/)**: グラフ描画
+- **[Heroicons](https://heroicons.com/)**: アイコン素材
+
