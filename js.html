@@ -1,0 +1,499 @@
+<script src="//unpkg.com/alpinejs" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+
+<script>
+    // Chart.js プラグイン登録
+    Chart.register(ChartDataLabels);
+
+    function appData() {
+        return {
+            appVersion: '1.7.0', // 資産推移ライン追加
+            loading: true,
+            error: null,
+
+            // UI State
+            currentTab: 'monthly', // 'monthly' | 'tags' | 'annual'
+            filterItem: '',
+            filterType: 'ALL', // 'ALL' | '収入' | '支出' (金額判定)
+            filterColD: '', // D列(種別)フィルタ
+
+            // Data State
+            currentYear: new Date().getFullYear(),
+            currentMonth: new Date().getMonth() + 1,
+            summary: { income: 0, expense: 0, balance: 0 },
+            byCategory: {},
+            details: [],
+
+            // Annual Analysis State
+            annualLoading: false,
+            annualTrend: [],
+            annualCategory: {},
+            annualTrendChartInstance: null,
+            annualCategoryChartInstance: null,
+
+            // Multi-Year State
+            globalLoading: false,
+            globalTrend: [],
+            globalChartInstance: null,
+
+            // Tag Analysis State
+            tagSummary: [],
+            tagLoading: false,
+            tagDetails: [],         // タグ詳細データ
+            tagDetailLoading: false,
+            tagModalOpen: false,    // タグ詳細モーダル
+            currentTagName: '',
+
+            modalOpen: false,
+            selectedItem: {},
+            chartInstance: null,
+
+            init() {
+                console.log('App initialized. Version:', this.appVersion);
+                this.fetchData();
+                this.fetchTagData();
+                this.fetchAnnualData(); // 初期化時に取得
+                this.fetchGlobalTrend(); // 全期間推移
+            },
+
+            // 年間データの合計 (Annual Tab用)
+            get annualSummary() {
+                let inc = 0, exp = 0;
+                this.annualTrend.forEach(m => {
+                    inc += (m.income || 0);
+                    exp += (m.expense || 0);
+                });
+                return {
+                    income: inc,
+                    expense: exp,
+                    balance: inc - exp
+                };
+            },
+
+            get uniqueDValues() {
+                if (!this.details) return [];
+                // D列(type)のユニークな値を抽出
+                const types = new Set(this.details.map(d => d.type).filter(t => t));
+                return Array.from(types).sort();
+            },
+
+            get filteredDetails() {
+                if (!this.details) return [];
+                return this.details.filter(item => {
+                    // 項目検索
+                    const matchText = (this.filterItem === '') ||
+                        (item.category && item.category.indexOf(this.filterItem) > -1) ||
+                        (item.memo && item.memo.indexOf(this.filterItem) > -1);
+
+                    // 収支(金額)フィルタ
+                    let matchAmountType = true;
+                    if (this.filterType === '収入') {
+                        matchAmountType = (item.amount >= 0);
+                    } else if (this.filterType === '支出') {
+                        matchAmountType = (item.amount < 0);
+                    }
+
+                    // D列(種別)フィルタ
+                    const matchColD = (this.filterColD === '') || (item.type === this.filterColD);
+
+                    return matchText && matchAmountType && matchColD;
+                });
+            },
+
+            get filteredSummary() {
+                let inc = 0;
+                let exp = 0;
+                const list = this.filteredDetails || [];
+                list.forEach(item => {
+                    if (item.amount > 0) inc += item.amount;
+                    else exp += Math.abs(item.amount);
+                });
+                return {
+                    income: inc,
+                    expense: exp,
+                    balance: inc - exp,
+                    count: list.length
+                };
+            },
+
+            fetchData() {
+                this.loading = true;
+                this.error = null;
+
+                google.script.run
+                    .withSuccessHandler((data) => {
+                        if (data.error) {
+                            this.error = data.error;
+                            this.loading = false;
+                            return;
+                        }
+                        this.summary = data.summary;
+                        this.byCategory = data.byCategory;
+                        this.details = data.details || [];
+                        this.currentYear = data.year || this.currentYear;
+                        this.currentMonth = data.month || this.currentMonth;
+
+                        this.updateChart();
+                        this.loading = false;
+                    })
+                    .withFailureHandler((err) => {
+                        this.error = "データの取得に失敗しました: " + err.message;
+                        this.loading = false;
+                    })
+                    .getDataByMonth(this.currentYear, this.currentMonth);
+            },
+
+            fetchTagData() {
+                this.tagLoading = true;
+                google.script.run
+                    .withSuccessHandler((data) => {
+                        if (data && data.tags) {
+                            this.tagSummary = data.tags;
+                        }
+                        this.tagLoading = false;
+                    })
+                    .withFailureHandler((err) => {
+                        console.error(err);
+                        this.tagLoading = false;
+                    })
+                    .getTagSummary();
+            },
+
+            fetchAnnualData() {
+                this.annualLoading = true;
+                google.script.run
+                    .withSuccessHandler((data) => {
+                        this.annualTrend = data.monthlyTrend || [];
+                        this.annualCategory = data.yearCategory || {};
+                        this.updateAnnualCharts();
+                        this.annualLoading = false;
+                    })
+                    .withFailureHandler((err) => {
+                        console.error("Annual Data Error", err);
+                        this.annualLoading = false;
+                    })
+                    .getAnnualData(this.currentYear);
+            },
+
+            fetchGlobalTrend() {
+                this.globalLoading = true;
+                google.script.run
+                    .withSuccessHandler((data) => {
+                        this.globalTrend = data.yearStats || [];
+                        this.updateGlobalChart();
+                        this.globalLoading = false;
+                    })
+                    .withFailureHandler((err) => {
+                        console.error("Global Trend Error", err);
+                        this.globalLoading = false;
+                    })
+                    .getMultiYearData();
+            },
+
+            showTagDetails(tagName) {
+                this.currentTagName = tagName;
+                this.tagModalOpen = true;
+                this.tagDetailLoading = true;
+                this.tagDetails = [];
+
+                google.script.run
+                    .withSuccessHandler((data) => {
+                        if (data && data.details) {
+                            this.tagDetails = data.details;
+                        }
+                        this.tagDetailLoading = false;
+                    })
+                    .withFailureHandler((err) => {
+                        console.error(err);
+                        this.tagDetailLoading = false;
+                    })
+                    .getTagDetails(tagName);
+            },
+
+            closeTagModal() {
+                this.tagModalOpen = false;
+                this.tagDetails = [];
+                this.currentTagName = '';
+            },
+
+            changeDate(type, diff) {
+                // type: 'month' | 'year'
+                if (type === 'year') {
+                    this.currentYear += diff;
+                    this.fetchData(); // 月次も更新（同じ月の別年）
+                    this.fetchAnnualData(); // 年間更新
+                    // GlobalTrendは全期間なので再取得不要（データが変わらない限り）
+                } else {
+                    // Month Logic
+                    let newMonth = this.currentMonth + diff;
+                    let yearChanged = false;
+                    if (newMonth > 12) {
+                        newMonth = 1;
+                        this.currentYear++;
+                        yearChanged = true;
+                    } else if (newMonth < 1) {
+                        newMonth = 12;
+                        this.currentYear--;
+                        yearChanged = true;
+                    }
+                    this.currentMonth = newMonth;
+                    this.fetchData();
+                    if (yearChanged) {
+                        this.fetchAnnualData();
+                    }
+                }
+            },
+
+            formatCurrency(value) {
+                return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY' }).format(value);
+            },
+
+            showDetail(item) {
+                this.selectedItem = item;
+                this.modalOpen = true;
+            },
+
+            updateChart() {
+                const ctx = document.getElementById('categoryChart').getContext('2d');
+                // カテゴリデータの整形
+                const labels = Object.keys(this.byCategory);
+                if (labels.length === 0) {
+                    if (this.chartInstance) {
+                        this.chartInstance.destroy();
+                        this.chartInstance = null;
+                    }
+                    return;
+                }
+
+                const dataValues = labels.map(label => this.byCategory[label]);
+                const colors = [
+                    '#60A5FA', '#34D399', '#F472B6', '#A78BFA', '#FBBF24',
+                    '#9CA3AF', '#F87171', '#818CF8', '#2DD4BF', '#FB923C'
+                ];
+
+                if (this.chartInstance) {
+                    this.chartInstance.destroy();
+                }
+
+                this.chartInstance = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: dataValues,
+                            backgroundColor: colors.slice(0, labels.length),
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'right' },
+                            datalabels: {
+                                color: '#fff',
+                                font: { weight: 'bold', size: 12 },
+                                formatter: (value, ctx) => this.formatCurrency(value),
+                                display: 'auto'
+                            }
+                        }
+                    }
+                });
+            },
+
+            updateAnnualCharts() {
+                // 1. Trend Chart (Bar + Line)
+                const ctxTrend = document.getElementById('annualTrendChart');
+                if (ctxTrend) {
+                    if (this.annualTrendChartInstance) this.annualTrendChartInstance.destroy();
+
+                    const labels = this.annualTrend.map(d => `${d.month}月`);
+                    const incomeData = this.annualTrend.map(d => d.income);
+                    const expenseData = this.annualTrend.map(d => d.expense);
+                    const balanceData = this.annualTrend.map(d => d.balance); // 貯蓄(=収支)
+
+                    this.annualTrendChartInstance = new Chart(ctxTrend.getContext('2d'), {
+                        type: 'bar', // ベースはBar
+                        data: {
+                            labels: labels,
+                            datasets: [
+                                {
+                                    label: '収入',
+                                    data: incomeData,
+                                    backgroundColor: '#60A5FA',
+                                    order: 2
+                                },
+                                {
+                                    label: '支出',
+                                    data: expenseData,
+                                    backgroundColor: '#F87171',
+                                    order: 3
+                                },
+                                {
+                                    label: '貯蓄(収支)',
+                                    data: balanceData,
+                                    type: 'line', // 折れ線
+                                    borderColor: '#10B981',
+                                    backgroundColor: '#10B981',
+                                    borderWidth: 2,
+                                    tension: 0.1,
+                                    fill: false,
+                                    order: 1
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                tooltip: {
+                                    callbacks: {
+                                        label: (ctx) => `${ctx.dataset.label}: ${this.formatCurrency(ctx.raw)}`
+                                    }
+                                },
+                                datalabels: {
+                                    display: 'auto',
+                                    color: '#555',
+                                    anchor: 'end',
+                                    align: 'top',
+                                    font: { weight: 'bold', size: 10 },
+                                    formatter: (val) => {
+                                        if (val === 0) return '';
+                                        return Math.round(val / 10000) + '万';
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: { callback: (val) => val.toLocaleString() }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // 2. Category Chart (Doughnut)
+                const ctxCat = document.getElementById('annualCategoryChart');
+                if (ctxCat) {
+                    if (this.annualCategoryChartInstance) this.annualCategoryChartInstance.destroy();
+
+                    const labels = Object.keys(this.annualCategory);
+                    const dataValues = labels.map(l => this.annualCategory[l]);
+                    const colors = ['#60A5FA', '#34D399', '#F472B6', '#A78BFA', '#FBBF24', '#9CA3AF', '#F87171', '#818CF8', '#2DD4BF', '#FB923C'];
+
+                    this.annualCategoryChartInstance = new Chart(ctxCat.getContext('2d'), {
+                        type: 'doughnut',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                data: dataValues,
+                                backgroundColor: colors.slice(0, labels.length),
+                                borderWidth: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { position: 'right' },
+                                datalabels: {
+                                    color: '#fff',
+                                    font: { weight: 'bold', size: 12 },
+                                    formatter: (val) => this.formatCurrency(val),
+                                    display: 'auto'
+                                }
+                            }
+                        }
+                    });
+                }
+            },
+
+            updateGlobalChart() {
+                const ctxGlobal = document.getElementById('globalTrendChart');
+                if (!ctxGlobal) return;
+
+                if (this.globalChartInstance) this.globalChartInstance.destroy();
+
+                const labels = this.globalTrend.map(d => `${d.year}年`);
+                const incomeData = this.globalTrend.map(d => d.income);
+                const expenseData = this.globalTrend.map(d => d.expense);
+
+                // 資産推移（累積収支）の計算
+                let currentAsset = 0;
+                const assetData = this.globalTrend.map(d => {
+                    const balance = d.income - d.expense;
+                    currentAsset += balance;
+                    return currentAsset;
+                });
+
+                this.globalChartInstance = new Chart(ctxGlobal.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: '総資産推移', // 累積
+                                data: assetData,
+                                type: 'line',
+                                borderColor: '#8B5CF6', // Purple
+                                backgroundColor: '#8B5CF6',
+                                borderWidth: 3,
+                                pointBackgroundColor: '#fff', // ポイントを目立たせる
+                                pointBorderWidth: 2,
+                                pointRadius: 4,
+                                tension: 0.1,
+                                fill: false,
+                                order: 0 // 最前面
+                            },
+                            {
+                                label: '収入',
+                                data: incomeData,
+                                backgroundColor: '#60A5FA',
+                                order: 2
+                            },
+                            {
+                                label: '支出',
+                                data: expenseData,
+                                backgroundColor: '#F87171',
+                                order: 3
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index', // ホバー時に全データ表示
+                            intersect: false,
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: (ctx) => `${ctx.dataset.label}: ${this.formatCurrency(ctx.raw)}`
+                                }
+                            },
+                            datalabels: {
+                                color: '#555',
+                                anchor: 'end',
+                                align: 'top',
+                                font: { weight: 'bold', size: 10 },
+                                formatter: (val, ctx) => {
+                                    if (val === 0) return '';
+                                    return Math.round(val / 10000) + '万';
+                                },
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: { callback: (val) => val.toLocaleString() }
+                            }
+                        }
+                    }
+                });
+            }
+        };
+    }
+</script>

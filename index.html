@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <base target="_top">
+    <?!= include('css'); ?>
+</head>
+
+<body>
+    <div id="app" x-data="appData()" x-init="init()" class="bg-gray-50 min-h-screen text-gray-800 font-sans">
+
+        <!-- ヘッダー -->
+        <header class="bg-white shadow-sm sticky top-0 z-10">
+            <div class="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
+                <h1 class="text-xl font-bold text-indigo-600 flex items-center gap-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+                        </path>
+                    </svg>
+                    家計簿💰ダッシュボード
+                </h1>
+                <div class="flex items-center gap-2">
+                    <!-- 月次レポート用ナビゲーション -->
+                    <div x-show="currentTab === 'monthly'" class="flex items-center gap-2">
+                        <button @click="changeDate('month', -1)" class="p-2 rounded-full hover:bg-gray-100 transition">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15 19l-7-7 7-7">
+                                </path>
+                            </svg>
+                        </button>
+                        <span class="text-lg font-medium w-32 text-center"
+                            x-text="`${currentYear}年 ${currentMonth}月`"></span>
+                        <button @click="changeDate('month', 1)" class="p-2 rounded-full hover:bg-gray-100 transition">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7">
+                                </path>
+                            </svg>
+                        </button>
+                    </div>
+                    <!-- その他のタブでは年表示のみなどシンプルに -->
+                    <div x-show="currentTab !== 'monthly'" class="text-lg font-medium text-gray-500">
+                        <span x-text="currentTab === 'annual' ? `${currentYear}年` : ''"></span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- ローディング -->
+        <div x-show="loading" class="fixed inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50">
+            <div class="animate-spin rounded-full h-12 w-12 border-4 border-indigo-500 border-t-transparent"></div>
+        </div>
+
+        <!-- エラー表示 -->
+        <div x-show="error" x-transition class="max-w-4xl mx-auto mt-4 px-4">
+            <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
+                <p class="font-bold">Error</p>
+                <p x-text="error"></p>
+            </div>
+        </div>
+
+        <!-- タブナビゲーション -->
+        <div class="max-w-4xl mx-auto px-4 mt-4">
+            <div class="flex space-x-1 bg-gray-200 p-1 rounded-lg inline-flex overflow-x-auto">
+                <button @click="currentTab = 'monthly'"
+                    class="px-4 py-2 rounded-md text-sm font-medium transition whitespace-nowrap"
+                    :class="currentTab === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600 hover:text-gray-800 hover:bg-gray-300'">
+                    月次レポート
+                </button>
+                <button @click="currentTab = 'annual'; fetchAnnualData()"
+                    class="px-4 py-2 rounded-md text-sm font-medium transition whitespace-nowrap"
+                    :class="currentTab === 'annual' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600 hover:text-gray-800 hover:bg-gray-300'">
+                    年間分析
+                </button>
+                <button @click="currentTab = 'tags'"
+                    class="px-4 py-2 rounded-md text-sm font-medium transition whitespace-nowrap"
+                    :class="currentTab === 'tags' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600 hover:text-gray-800 hover:bg-gray-300'">
+                    タグ分析 (全期間)
+                </button>
+            </div>
+        </div>
+
+        <!-- メインコンテンツ領域 -->
+        <main class="max-w-4xl mx-auto px-4 py-6 space-y-6" x-show="!loading" x-transition>
+
+            <!-- [TAB] 月次レポート -->
+            <div x-show="currentTab === 'monthly'" class="space-y-6">
+
+                <!-- 概要カード (既存) -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="bg-white rounded-xl shadow-sm p-4 border-l-4 border-blue-500">
+                        <div class="text-sm text-gray-500">収入</div>
+                        <div class="text-2xl font-bold text-gray-800" x-text="formatCurrency(summary.income)"></div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-4 border-l-4 border-red-500">
+                        <div class="text-sm text-gray-500">支出</div>
+                        <div class="text-2xl font-bold text-gray-800" x-text="formatCurrency(summary.expense)"></div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-4 border-l-4"
+                        :class="summary.balance >= 0 ? 'border-green-500' : 'border-orange-500'">
+                        <div class="text-sm text-gray-500">収支差引</div>
+                        <div class="text-2xl font-bold"
+                            :class="summary.balance >= 0 ? 'text-green-600' : 'text-orange-600'"
+                            x-text="formatCurrency(summary.balance)"></div>
+                    </div>
+                </div>
+
+                <!-- グラフエリア (既存) -->
+                <div class="bg-white rounded-xl shadow-sm p-6">
+                    <h2 class="text-lg font-semibold mb-4 text-gray-700">カテゴリ別支出</h2>
+                    <div class="relative h-64 w-full">
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 明細リスト (フィルタ付き) -->
+                <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+                    <div
+                        class="px-6 py-4 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <h2 class="text-lg font-semibold text-gray-700">明細一覧</h2>
+
+                        <!-- フィルタUI -->
+                        <div class="flex flex-wrap items-center gap-2">
+                            <!-- 収支(金額)フィルタ -->
+                            <select x-model="filterType"
+                                class="border-gray-300 rounded-md shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border text-base sm:text-sm">
+                                <option value="ALL">すべて</option>
+                                <option value="収入">収入のみ</option>
+                                <option value="支出">支出のみ</option>
+                            </select>
+
+                            <!-- 種別(D列)フィルタ -->
+                            <select x-model="filterColD"
+                                class="border-gray-300 rounded-md shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border text-base sm:text-sm">
+                                <option value="">全収支先</option>
+                                <template x-for="val in uniqueDValues" :key="val">
+                                    <option :value="val" x-text="val"></option>
+                                </template>
+                            </select>
+
+                            <!-- テキスト検索 -->
+                            <input type="text" x-model="filterItem" placeholder="検索..."
+                                class="border-gray-300 rounded-md shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border w-32 sm:w-40 text-base sm:text-sm">
+                        </div>
+                    </div>
+
+                    <!-- フィルタ集計結果 -->
+                    <div class="px-6 py-2 bg-indigo-50 border-b border-indigo-100 flex justify-end gap-6 text-sm">
+                        <span class="text-gray-600">件数: <span class="font-bold text-gray-800"
+                                x-text="filteredSummary.count"></span>件</span>
+                        <span class="text-gray-600" x-show="filterType !== '支出'">収入計: <span
+                                class="font-bold text-blue-600"
+                                x-text="formatCurrency(filteredSummary.income)"></span></span>
+                        <span class="text-gray-600" x-show="filterType !== '収入'">支出計: <span
+                                class="font-bold text-red-600"
+                                x-text="formatCurrency(filteredSummary.expense)"></span></span>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th scope="col"
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        日付</th>
+                                    <th scope="col"
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        項目/内訳</th>
+                                    <th scope="col"
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        メモ</th>
+                                    <th scope="col"
+                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        金額</th>
+                                    <th scope="col"
+                                        class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        収支先</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <template x-for="(item, index) in filteredDetails" :key="index">
+                                    <tr class="hover:bg-gray-50 transition cursor-pointer" @click="showDetail(item)">
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600"
+                                            x-text="item.date"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="text-sm font-medium text-gray-900" x-text="item.category"></div>
+                                            <div class="text-xs text-gray-500" x-text="item.tag"></div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 max-w-xs truncate"
+                                            x-text="item.memo"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-right font-medium"
+                                            :class="item.amount >= 0 ? 'text-blue-600' : 'text-red-600'"
+                                            x-text="formatCurrency(item.amount)">
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-center">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                                                :class="item.amount >= 0 ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'"
+                                                x-text="item.type">
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr x-show="filteredDetails.length === 0">
+                                    <td colspan="5" class="px-6 py-10 text-center text-gray-500">
+                                        データがありません <span x-show="filterItem">(検索条件を変更してください)</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- [TAB] 年間分析 (NEW) -->
+            <div x-show="currentTab === 'annual'" class="space-y-6">
+                <!-- 年切り替えナビゲーション -->
+                <div class="flex justify-center items-center gap-4 bg-white p-4 rounded-xl shadow-sm">
+                    <button @click="changeDate('year', -1)" class="p-2 rounded-full hover:bg-gray-100 transition">
+                        <svg class="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                        </svg>
+                    </button>
+                    <h2 class="text-xl font-bold text-gray-800"><span x-text="currentYear"></span>年の分析</h2>
+                    <button @click="changeDate('year', 1)" class="p-2 rounded-full hover:bg-gray-100 transition">
+                        <svg class="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                        </svg>
+                    </button>
+                    <div x-show="annualLoading" class="ml-4">
+                        <div class="animate-spin rounded-full h-5 w-5 border-2 border-indigo-500 border-t-transparent">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 年間概要数値カード -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="bg-white rounded-xl shadow-sm p-4 border-l-4 border-blue-500">
+                        <div class="text-sm text-gray-500">年間収入</div>
+                        <div class="text-2xl font-bold text-gray-800" x-text="formatCurrency(annualSummary.income)">
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-4 border-l-4 border-red-500">
+                        <div class="text-sm text-gray-500">年間支出</div>
+                        <div class="text-2xl font-bold text-gray-800" x-text="formatCurrency(annualSummary.expense)">
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-4 border-l-4"
+                        :class="annualSummary.balance >= 0 ? 'border-green-500' : 'border-orange-500'">
+                        <div class="text-sm text-gray-500">年間収支</div>
+                        <div class="text-2xl font-bold"
+                            :class="annualSummary.balance >= 0 ? 'text-green-600' : 'text-orange-600'"
+                            x-text="formatCurrency(annualSummary.balance)"></div>
+                    </div>
+                </div>
+
+                <!-- 1. 年間貯蓄推移チャート -->
+                <div class="bg-white rounded-xl shadow-sm p-6">
+                    <h2 class="text-lg font-semibold mb-4 text-gray-700">月別貯蓄推移 (収支バランス)</h2>
+                    <div class="relative h-72 w-full">
+                        <canvas id="annualTrendChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 2. 年間カテゴリ別チャート -->
+                <div class="bg-white rounded-xl shadow-sm p-6">
+                    <h2 class="text-lg font-semibold mb-4 text-gray-700">年間消費マクロ分析 (カテゴリ別支出)</h2>
+                    <div class="relative h-80 w-full">
+                        <canvas id="annualCategoryChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 3. 長期的な収支推移 (NEW) -->
+                <div class="bg-white rounded-xl shadow-sm p-6 mt-8">
+                    <h2 class="text-lg font-semibold mb-4 text-gray-700">長期的な収支・資産推移 (年別)</h2>
+                    <div x-show="globalLoading" class="text-center py-10">
+                        <div
+                            class="animate-spin rounded-full h-8 w-8 border-2 border-indigo-500 border-t-transparent mx-auto">
+                        </div>
+                    </div>
+                    <div x-show="!globalLoading" class="relative h-64 w-full">
+                        <canvas id="globalTrendChart"></canvas>
+                    </div>
+                </div>
+
+                <div x-show="!annualLoading && annualTrend.length === 0" class="text-center py-10 text-gray-500">
+                    該当年のデータがありません。
+                </div>
+            </div>
+
+            <!-- [TAB] タグ分析 -->
+            <div x-show="currentTab === 'tags'" class="space-y-6">
+                <div class="bg-white rounded-xl shadow-sm p-6">
+                    <h2 class="text-lg font-semibold mb-4 text-gray-700">タグ分析 (全期間)</h2>
+                    <div x-show="tagLoading" class="text-center py-8">
+                        <div
+                            class="animate-spin rounded-full h-8 w-8 border-2 border-indigo-500 border-t-transparent mx-auto">
+                        </div>
+                        <p class="text-gray-500 mt-2 text-sm">集計中...</p>
+                    </div>
+
+                    <div x-show="!tagLoading" class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        タグ</th>
+                                    <th
+                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        件数</th>
+                                    <th
+                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        収入計</th>
+                                    <th
+                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        支出計</th>
+                                    <th
+                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        収支差引</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <template x-for="(tagStats, idx) in tagSummary" :key="idx">
+                                    <tr class="hover:bg-gray-50 cursor-pointer transition"
+                                        @click="showTagDetails(tagStats.tag)">
+                                        <td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900"
+                                            x-text="tagStats.tag"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-right text-gray-500"
+                                            x-text="tagStats.count"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-right text-blue-600"
+                                            x-text="formatCurrency(tagStats.income)"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-right text-red-600"
+                                            x-text="formatCurrency(tagStats.expense)"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-right font-bold"
+                                            :class="tagStats.balance >= 0 ? 'text-green-600' : 'text-red-500'"
+                                            x-text="formatCurrency(tagStats.balance)">
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr x-show="tagSummary.length === 0">
+                                    <td colspan="5" class="px-6 py-8 text-center text-gray-500">
+                                        データがありません
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-400 text-right">※行をクリックすると詳細を表示します</div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- 詳細モーダル (月次明細用) -->
+        <div x-show="modalOpen" class="fixed inset-0 z-50 overflow-y-auto" style="display: none;">
+            <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                <div x-show="modalOpen" @click="modalOpen = false" x-transition.opacity
+                    class="fixed inset-0 transition-opacity" aria-hidden="true">
+                    <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+                </div>
+                <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                <div x-show="modalOpen" x-transition.scale
+                    class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg w-full">
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <div class="sm:flex sm:items-start">
+                            <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full sm:mx-0 sm:h-10 sm:w-10"
+                                :class="selectedItem.type === '収入' ? 'bg-blue-100' : 'bg-red-100'">
+                                <svg class="h-6 w-6"
+                                    :class="selectedItem.type === '収入' ? 'text-blue-600' : 'text-red-600'" fill="none"
+                                    viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                            </div>
+                            <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                                <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
+                                    詳細情報
+                                </h3>
+                                <div class="mt-4 space-y-3">
+                                    <div class="flex justify-between border-b pb-2">
+                                        <span class="text-gray-500 text-sm">日付</span>
+                                        <span class="text-gray-900 font-medium" x-text="selectedItem.date"></span>
+                                    </div>
+                                    <div class="flex justify-between border-b pb-2">
+                                        <span class="text-gray-500 text-sm">金額</span>
+                                        <span class="text-lg font-bold"
+                                            :class="selectedItem.type === '収入' ? 'text-blue-600' : 'text-red-600'"
+                                            x-text="formatCurrency(selectedItem.amount)"></span>
+                                    </div>
+                                    <div class="flex justify-between border-b pb-2">
+                                        <span class="text-gray-500 text-sm">カテゴリ</span>
+                                        <span class="text-gray-900" x-text="selectedItem.category"></span>
+                                    </div>
+                                    <div class="flex justify-between border-b pb-2" x-show="selectedItem.tag">
+                                        <span class="text-gray-500 text-sm">タグ</span>
+                                        <span class="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-600"
+                                            x-text="selectedItem.tag"></span>
+                                    </div>
+                                    <div class="pt-2">
+                                        <span class="text-gray-500 text-sm block mb-1">メモ</span>
+                                        <p class="text-gray-700 bg-gray-50 p-3 rounded text-sm whitespace-pre-wrap"
+                                            x-text="selectedItem.memo || 'なし'"></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button type="button"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                            @click="modalOpen = false">
+                            閉じる
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- タグ詳細モーダル (全期間明細用) -->
+        <div x-show="tagModalOpen" class="fixed inset-0 z-50 overflow-y-auto" style="display: none;">
+            <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:p-0">
+                <div x-show="tagModalOpen" @click="tagModalOpen = false" x-transition.opacity
+                    class="fixed inset-0 transition-opacity" aria-hidden="true">
+                    <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+                </div>
+
+                <div x-show="tagModalOpen" x-transition.scale
+                    class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl w-full">
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg leading-6 font-bold text-gray-900">
+                                タグ詳細: <span class="text-indigo-600" x-text="currentTagName"></span>
+                            </h3>
+                            <button @click="tagModalOpen = false" class="text-gray-400 hover:text-gray-500">
+                                <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div x-show="tagDetailLoading" class="text-center py-10">
+                            <div
+                                class="animate-spin rounded-full h-8 w-8 border-2 border-indigo-500 border-t-transparent mx-auto">
+                            </div>
+                        </div>
+
+                        <div x-show="!tagDetailLoading" class="overflow-x-auto max-h-[60vh]">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50 sticky top-0">
+                                    <tr>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">日付
+                                        </th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">項目
+                                        </th>
+                                        <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">金額
+                                        </th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">メモ
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-200">
+                                    <template x-for="(item, idx) in tagDetails" :key="idx">
+                                        <tr>
+                                            <td class="px-4 py-2 text-sm text-gray-600 whitespace-nowrap"
+                                                x-text="item.date"></td>
+                                            <td class="px-4 py-2 text-sm text-gray-900 whitespace-nowrap"
+                                                x-text="item.category"></td>
+                                            <td class="px-4 py-2 text-sm text-right font-medium whitespace-nowrap"
+                                                :class="item.amount >= 0 ? 'text-blue-600' : 'text-red-600'"
+                                                x-text="formatCurrency(item.amount)">
+                                            </td>
+                                            <td class="px-4 py-2 text-sm text-gray-500 max-w-xs truncate"
+                                                x-text="item.memo"></td>
+                                        </tr>
+                                    </template>
+                                    <tr x-show="tagDetails.length === 0">
+                                        <td colspan="4" class="px-4 py-8 text-center text-gray-500">データがありません</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <footer class="mt-12 py-6 text-center text-gray-400 text-xs">
+        <p>Household Account Dashboard &copy; 2026</p>
+        <p class="mt-1">v<span x-text="appVersion"></span></p>
+    </footer>
+
+    </div>
+
+    <?!= include('js'); ?>
+</body>
+
+</html>
